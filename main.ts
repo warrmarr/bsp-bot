@@ -3,7 +3,7 @@
  * Webhook-режим, хранилище Deno KV, TypeScript
  */
 
-import { Bot, Context, InlineKeyboard, Keyboard, session, webhookCallback } from "https://deno.land/x/grammy@v1.21.1/mod.tsh";
+import { Bot, Context, InlineKeyboard, Keyboard, session, webhookCallback } from "https://deno.land/x/grammy@v1.21.1/mod.ts";
 import {
   type Conversation,
   type ConversationFlavor,
