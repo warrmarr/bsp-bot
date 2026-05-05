@@ -11,7 +11,7 @@
  * 8. /support — тикет поддержки
  * 9. /rejoin — восстановление аккаунта
  * 10. /privacy — политика конфиденциальности
- * 11. /feedback — оценка встречи (1–5 звёзд)
+ * 11. /feedback — оценка встречи (1–5 звёзд)h
  * 12. /cron_status — мониторинг кронов
  * 13. /weekly_report — CSV для кураторов
  * 14. /export_my_data — GDPR-выгрузка
@@ -468,7 +468,7 @@ async function makeInvId(tgId: number, tariff: string): Promise<number> {
 // ─── SESSION ──────────────────────────────────────────────────────────────────
 function kvStorage(kvDb: Deno.Kv) {
   return {
-    read: async (key: string) => (await kvDb.get<SessionData>(["session", key])).value ?? null,
+    read: async (key: string) => (await kvDb.get<SessionData>(["session", key])).value ?? undefined,
     write: async (key: string, value: SessionData) => { await kvDb.set(["session", key], value); },
     delete: async (key: string) => { await kvDb.delete(["session", key]); },
   };
