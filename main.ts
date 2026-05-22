@@ -1905,6 +1905,15 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
   }
 
+  if (url.pathname === "/debug-token") {
+    return new Response(JSON.stringify({
+      token_set: BOT_TOKEN.length > 0,
+      token_prefix: BOT_TOKEN.substring(0, 8) + "...",
+      login: ROBOKASSA_LOGIN,
+      pass1_set: ROBOKASSA_PASS1.length > 0,
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+
   if (url.pathname === "/webhook-info") {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`);
     const data = await res.json();
