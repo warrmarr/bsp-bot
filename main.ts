@@ -496,6 +496,24 @@ type MyConversation = Conversation<MyContext>;
 
 const bot = new Bot<MyContext>(BOT_TOKEN);
 bot.use(session({ initial: (): SessionData => ({ step: "" }), storage: kvStorage(kv) }));
+
+// ─── СБРОС ЗАВИСШЕЙ СЕССИИ ────────────────────────────────────────────────────
+// Добавить ДО conversations(), чтобы /start и /reset всегда сбрасывали стейт
+bot.use(async (ctx, next) => {
+  const text = ctx.message?.text ?? "";
+  if (text === "/start" || text.startsWith("/start ") || text === "/reset") {
+    const tgId = ctx.from?.id;
+    log("INFO", "session_reset", { tgId, cmd: text.split(" ")[0] });
+    // Стираем KV-запись сессии напрямую (в т.ч. поле conversations внутри неё)
+    if (tgId) {
+      await kv.delete(["session", String(tgId)]);
+    }
+    // Ставим чистый объект — conversations() увидит пустой стейт
+    ctx.session = { step: "" };
+  }
+  return next();
+});
+
 bot.use(conversations());
 bot.use(async (ctx, next) => {
   const tgId = ctx.from?.id;
@@ -703,6 +721,11 @@ bot.use(createConversation(meetingLogConv));
 
 
 // ─── КОМАНДЫ ──────────────────────────────────────────────────────────────────
+
+// /reset — принудительный сброс сессии (сессия уже очищена в pre-middleware выше)
+bot.command("reset", async (ctx) => {
+  await ctx.reply("✅ Состояние сброшено. Нажми /start чтобы начать заново.");
+});
 
 bot.command("start", async (ctx) => {
   const u = ctx.from!;
