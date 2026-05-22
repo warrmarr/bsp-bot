@@ -1863,6 +1863,17 @@ bot.callbackQuery("checkin_hard", async (ctx) => {
   await ctx.reply("Понял. Если нужна помощь — используй /enh чтобы сформулировать запрос для группы.\n\nИли напиши куратору: @bcpru");
 });
 
+// ─── ERROR HANDLER ────────────────────────────────────────────────────────────
+bot.catch((err) => {
+  const ctx = err.ctx;
+  log("ERROR", "bot_unhandled", {
+    error: String(err.error),
+    update_id: ctx?.update?.update_id,
+    from: ctx?.from?.id,
+    text: ctx?.message?.text ?? ctx?.callbackQuery?.data,
+  });
+});
+
 // ─── WEBHOOK + HTTP ───────────────────────────────────────────────────────────
 const handleUpdate = webhookCallback(bot, "std/http");
 
@@ -1881,6 +1892,24 @@ Deno.serve(async (req: Request) => {
   }
 
   if (url.pathname === "/") return new Response("БСП Bot v4.4.0 ✅", { status: 200 });
+
+  if (url.pathname === "/register-webhook") {
+    const host = url.origin;
+    const webhookUrl = `${host}/${WEBHOOK_SECRET}`;
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: webhookUrl, allowed_updates: ["message","callback_query","inline_query"] }),
+    });
+    const data = await res.json();
+    return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
+
+  if (url.pathname === "/webhook-info") {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`);
+    const data = await res.json();
+    return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
 
   if (url.pathname === `/${WEBHOOK_SECRET}`) {
     if (TG_SECRET_TOKEN) {
