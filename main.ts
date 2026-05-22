@@ -1916,7 +1916,12 @@ Deno.serve(async (req: Request) => {
       const header = req.headers.get("X-Telegram-Bot-Api-Secret-Token");
       if (header !== TG_SECRET_TOKEN) return new Response("Forbidden", { status: 403 });
     }
-    return handleUpdate(req);
+    try {
+      return await handleUpdate(req);
+    } catch (e) {
+      log("ERROR", "webhook_crash", { error: String(e) });
+      return new Response("ok", { status: 200 });
+    }
   }
 
   if (url.pathname === "/robokassa/result") {
