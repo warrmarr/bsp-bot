@@ -1864,14 +1864,26 @@ bot.callbackQuery("checkin_hard", async (ctx) => {
 });
 
 // ─── ERROR HANDLER ────────────────────────────────────────────────────────────
-bot.catch((err) => {
+bot.catch(async (err) => {
   const ctx = err.ctx;
+  const tgId = ctx?.from?.id;
   log("ERROR", "bot_unhandled", {
     error: String(err.error),
     update_id: ctx?.update?.update_id,
-    from: ctx?.from?.id,
+    from: tgId,
     text: ctx?.message?.text ?? ctx?.callbackQuery?.data,
   });
+  // Сбрасываем session (включая состояние conversations) чтобы разблокировать пользователя
+  if (tgId) {
+    try {
+      await kv.delete(["session", `${tgId}:${tgId}`]);
+      await kv.delete(["session", String(tgId)]);
+    } catch { /* ignore */ }
+  }
+  // Сообщаем пользователю об ошибке
+  try {
+    await ctx?.reply("⚙️ Произошла ошибка. Нажми /start чтобы начать заново.");
+  } catch { /* ignore */ }
 });
 
 // ─── WEBHOOK + HTTP ───────────────────────────────────────────────────────────
