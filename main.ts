@@ -361,8 +361,8 @@ const SCHEDULE_TEXT = `📅 <b>Слоты встреч</b> (мск)
 
 const CONTACTS_TEXT = `📞 <b>Контакты БСП</b>
 
-Telegram: @bcpru · Телефон: +7 960 000-91-91
-Email: info@bspru.ru · Сайт: bcpru.ru`;
+Telegram: @CTOCETOK · Телефон: +7 960 000-91-91
+Email: E@E1111.RU · Сайт: bcpru.ru`;
 
 const ENH_TEXT = `🤝 <b>Есть — Нужно — Хочу</b>
 
@@ -380,7 +380,7 @@ const PRIVACY_TEXT = `🔒 <b>Политика конфиденциальнос�
 • /delete_me — удалить все данные
 • /export_my_data — получить копию данных
 
-Оператор: info@bspru.ru`;
+Оператор: E@E1111.RU`;
 
 const WELCOME_STEPS = [
   "🎉 <b>Добро пожаловать в БСП!</b>\n\nТы вступил в сообщество равных. Пройдём быстрый онбординг — 4 шага, 2 минуты.",
@@ -392,9 +392,9 @@ const WELCOME_STEPS = [
 const WELCOME_DELAYS = [0, 3600*1000, 24*3600*1000, 48*3600*1000, 5*24*3600*1000];
 
 const FOLLOWUP_MESSAGES = [
-  { delay: 48*3600*1000, step: 1, text: "🟡 <b>Привет!</b>\n\nВидим, что ты оставил заявку в БСП. Это нормально — важные решения не принимаются в спешке.\n\nЕсть вопросы? Просто ответь или напиши @bcpru" },
+  { delay: 48*3600*1000, step: 1, text: "🟡 <b>Привет!</b>\n\nВидим, что ты оставил заявку в БСП. Это нормально — важные решения не принимаются в спешке.\n\nЕсть вопросы? Просто ответь или напиши @CTOCETOK" },
   { delay: 5*24*3600*1000, step: 2, text: "💡 <b>БСП — 5 дней без ответа</b>\n\nЗнаем, что ты занят. Один вопрос:\n\n<i>Что мешает сделать шаг?</i>\n\nОтвет поможет нам подобрать правильную группу именно для тебя." },
-  { delay: 10*24*3600*1000, step: 3, text: "🔔 <b>Последнее сообщение от БСП</b>\n\nНе хотим надоедать. Если передумаешь — мы здесь. @bcpru\n\nСпасибо за интерес к сообществу!" },
+  { delay: 10*24*3600*1000, step: 3, text: "🔔 <b>Последнее сообщение от БСП</b>\n\nНе хотим надоедать. Если передумаешь — мы здесь. @CTOCETOK\n\nСпасибо за интерес к сообществу!" },
 ];
 
 const STATUS_LABELS: Record<string, string> = {
@@ -484,9 +484,14 @@ function kvStorage(kvDb: Deno.Kv) {
 
 async function waitText(conversation: MyConversation, ctx: MyContext): Promise<string> {
   while (true) {
-    ctx = await conversation.waitFor(":text");
-    if (ctx.message?.text) return ctx.message.text;
-    await ctx.reply("Пожалуйста, отправьте текстовое сообщение.");
+    ctx = await conversation.wait();
+    const text = ctx.message?.text;
+    if (text === "/cancel" || text === "/reset") {
+      await ctx.reply("Действие отменено.", { reply_markup: mainKb });
+      return "❌ Отмена";
+    }
+    if (text) return text;
+    await ctx.reply("⌨️ Введите текстовый ответ или нажмите «❌ Отмена».");
   }
 }
 
@@ -517,7 +522,10 @@ bot.use(async (ctx, next) => {
 bot.use(conversations());
 bot.use(async (ctx, next) => {
   const tgId = ctx.from?.id;
-  if (tgId && isRateLimited(tgId)) return;
+  if (tgId && isRateLimited(tgId)) {
+    if (ctx.message) await ctx.reply("⏳ Не так быстро — подождите секунду и повторите.").catch(() => {});
+    return;
+  }
   return next();
 });
 
@@ -560,7 +568,7 @@ async function anketa(conversation: MyConversation, ctx: MyContext) {
   await notifyAdmins(bot,
     `🔔 <b>Новая заявка!</b>\n\n👤 ${name}\n🏙 ${city}\n💼 ${job}, ${company}\n📣 ${source}\nTG: @${u.username ?? "—"} | <code>${u.id}</code>`,
     notifyKb);
-  await ctx.reply("✅ <b>Заявка принята!</b>\n\nКуратор свяжется в течение дня.\n@bcpru · +7 960 000-91-91",
+  await ctx.reply("✅ <b>Заявка принята!</b>\n\nКуратор свяжется в течение дня.\n@CTOCETOK · +7 960 000-91-91",
     { parse_mode: "HTML", reply_markup: mainKb });
 }
 bot.use(createConversation(anketa));
@@ -759,7 +767,7 @@ bot.command("start", async (ctx) => {
         );
       } else {
         await ctx.reply(
-          `💳 ${desc} — ${label}\n\nДля оформления напиши куратору: @bcpru`,
+          `💳 ${desc} — ${label}\n\nДля оформления напиши куратору: @CTOCETOK`,
           { parse_mode: "HTML" }
         );
       }
@@ -786,7 +794,7 @@ bot.command("start", async (ctx) => {
   const visits = user?.visitCount ?? 1;
   if (visits === 3 && !["member","vip","trial","candidate"].includes(user?.status ?? "")) {
     await ctx.reply(
-      `👋 <b>${u.first_name}</b>, ты уже в третий раз заглядываешь!\n\nПредлагаем <b>первый месяц бесплатно</b> — прямо сейчас.\n\nНапиши куратору: @bcpru или нажми «Вступить» 👇`,
+      `👋 <b>${u.first_name}</b>, ты уже в третий раз заглядываешь!\n\nПредлагаем <b>первый месяц бесплатно</b> — прямо сейчас.\n\nНапиши куратору: @CTOCETOK или нажми «Вступить» 👇`,
       { parse_mode: "HTML", reply_markup: mainKb }
     );
     return;
@@ -1444,7 +1452,7 @@ bot.callbackQuery("trial_register", async (ctx) => {
   }
   await ctx.answerCallbackQuery("✅ Записываю!");
   if (!existing || existing.status === "lead") await upsertUser(u.id, u.username ?? "", { status: "trial" });
-  await ctx.reply("✅ <b>Записан на пробную Десятку!</b>\n\nКуратор свяжется в течение дня. @bcpru", { parse_mode: "HTML", reply_markup: mainKb });
+  await ctx.reply("✅ <b>Записан на пробную Десятку!</b>\n\nКуратор свяжется в течение дня. @CTOCETOK", { parse_mode: "HTML", reply_markup: mainKb });
   await notifyAdmins(bot, `🔔 <b>Запись на пробную!</b>\n@${u.username ?? "—"} (${u.id})`,
     new InlineKeyboard().url("💬 Написать", `tg://user?id=${u.id}`));
 });
@@ -1455,7 +1463,7 @@ bot.callbackQuery(/^nps_(\d+)$/, async (ctx) => {
   await kv.set(["nps", Date.now(), ctx.from.id], { tgId: ctx.from.id, score, ts: new Date().toISOString() });
   await logEvent(ctx.from.id, "nps", String(score));
   await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
-  const comment = score >= 9 ? "Рады, что встреча была ценной! 💙" : score >= 7 ? "Спасибо! Есть идеи — пиши @bcpru" : "Жаль. Напиши куратору @bcpru";
+  const comment = score >= 9 ? "Рады, что встреча была ценной! 💙" : score >= 7 ? "Спасибо! Есть идеи — пиши @CTOCETOK" : "Жаль. Напиши куратору @CTOCETOK";
   await ctx.reply(`Оценка <b>${score}/10</b>. ${comment}`, { parse_mode: "HTML" });
   await notifyAdmins(bot, `⭐ NPS от @${ctx.from.username ?? ctx.from.id}: <b>${score}/10</b>`);
 });
@@ -1494,7 +1502,7 @@ bot.callbackQuery(/^pay_(.+)$/, async (ctx) => {
     await ctx.reply(`💳 <b>${desc}</b>\n<b>${label}</b>\n\nНажми для оплаты:`,
       { parse_mode: "HTML", reply_markup: new InlineKeyboard().url(`💳 Оплатить ${label}`, url) });
   } else {
-    await ctx.reply(`💳 ${desc} — ${label}\n\nДля оплаты: @bcpru`, { parse_mode: "HTML" });
+    await ctx.reply(`💳 ${desc} — ${label}\n\nДля оплаты: @CTOCETOK`, { parse_mode: "HTML" });
   }
 });
 
@@ -1504,7 +1512,7 @@ bot.callbackQuery(/^admin_accept_(\d+)$/, async (ctx) => {
   const tgId = parseInt(ctx.match[1]);
   await changeStatus(tgId, "candidate");
   await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
-  try { await bot.api.sendMessage(tgId, "✅ <b>Заявка одобрена!</b>\n\nКуратор свяжется в течение дня. @bcpru", { parse_mode: "HTML" }); }
+  try { await bot.api.sendMessage(tgId, "✅ <b>Заявка одобрена!</b>\n\nКуратор свяжется в течение дня. @CTOCETOK", { parse_mode: "HTML" }); }
   catch (_e) { /* ignore */ }
 });
 
@@ -1883,7 +1891,7 @@ bot.callbackQuery("checkin_hard", async (ctx) => {
   await ctx.answerCallbackQuery("Разберёмся!");
   await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
   await kv.set(["checkin_log", ctx.from.id, Date.now()], { status: "hard", ts: new Date().toISOString() });
-  await ctx.reply("Понял. Если нужна помощь — используй /enh чтобы сформулировать запрос для группы.\n\nИли напиши куратору: @bcpru");
+  await ctx.reply("Понял. Если нужна помощь — используй /enh чтобы сформулировать запрос для группы.\n\nИли напиши куратору: @CTOCETOK");
 });
 
 // ─── ERROR HANDLER ────────────────────────────────────────────────────────────
