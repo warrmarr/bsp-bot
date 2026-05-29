@@ -13,7 +13,7 @@
  * В-2: Daily check-in — /checkin_on, /checkin_off + крон
  * В-3: Таймбанкинг — /give_time, /my_balance, /timebank_top
  * В-4: ЕНХ цифровой формат — conversational flow /enh
- * В-5: Напоминания о встречах — крон + /set_meetinghh
+ * В-5: Напоминания о встречах — крон + /set_meeting
  * В-1: Прогресс-бар — /my_progress
  * Л-1: Подготовка к встрече — /prep_meeting
  * Л-2: Разбор запроса 7 слоёв — /analyze_request
