@@ -1,5 +1,5 @@
 /**
- * БСП — Telegram Bot v4.6.0 (Deno Deploy + grammy)
+ * БСП — Telegram Bot v4.7.2 (Deno Deploy + grammy)
  * НОВОЕ в v4.6.0:
  * - Эндпоинт GET /pay?plan=bsp|bsp_plus|vip — прямая оплата с сайта без Telegram
  * - /robokassa/result теперь обрабатывает оплаты с сайта (Shp_tgId=0)
@@ -1300,7 +1300,13 @@ bot.hears("💳 Тарифы", async (ctx) => {
 
 bot.hears("📞 Контакты", (ctx) => ctx.reply(CONTACTS_TEXT, { parse_mode: "HTML" }));
 bot.hears("↩️ Меню", (ctx) => ctx.reply("Главное меню:", { reply_markup: mainKb }));
-bot.hears("✍️ Вступить", (ctx) => ctx.conversation.enter("anketa"));
+bot.hears("✍️ Вступить", async (ctx) => {
+  const u = await getUser(ctx.from!.id);
+  if (u && ["member","vip","trial"].includes(u.status)) {
+    return ctx.reply("Ты уже участник БСП! 🎉\n\nВот твоё меню:", { reply_markup: memberKb });
+  }
+  return ctx.conversation.enter("anketa");
+});
 bot.hears("❓ Вопрос куратору", (ctx) => ctx.conversation.enter("question"));
 
 bot.hears("👥 Я участник", async (ctx) => {
@@ -1671,6 +1677,14 @@ bot.callbackQuery("cancel_status", async (ctx) => {
 });
 
 
+// ─── CATCH-ALL ─────────────────────────────────────────────────────────────────────────────
+bot.on("message", async (ctx) => {
+  await ctx.conversation.exit();
+  const u = await getUser(ctx.from!.id);
+  const kb = u && ["member","vip","trial"].includes(u.status) ? memberKb : mainKb;
+  await ctx.reply("Не понял 🤔 Возвращаю в меню 👇", { reply_markup: kb });
+});
+
 // ─── CRON JOBS ────────────────────────────────────────────────────────────────
 
 // Welcome-последовательность
@@ -1963,7 +1977,7 @@ Deno.serve(async (req: Request) => {
       { headers: { "Content-Type": "application/json", "Cache-Control": "no-cache, no-store" } });
   }
 
-  if (url.pathname === "/") return new Response("БСП Bot v4.7.0 ✅", { status: 200 });
+  if (url.pathname === "/") return new Response("БСП Bot v4.7.2 ✅", { status: 200 });
 
   if (url.pathname === "/register-webhook") {
     const host = url.origin;
@@ -2068,7 +2082,6 @@ Deno.serve(async (req: Request) => {
         return new Response("Bad signature", { status: 403 });
       }
       if (!isWebPayment) {
-        await changeStatus(tgId, "member");
         await upsertUser(tgId, "", { tariff, status: "member" });
         await logEvent(tgId, "payment", `${tariff} ${outSum}₽ inv=${invId}`);
         statsCache = null;
