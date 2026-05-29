@@ -482,6 +482,15 @@ function kvStorage(kvDb: Deno.Kv) {
   };
 }
 
+// Команды которые всегда прерывают диалог (для всех пользователей)
+const ESCAPE_COMMANDS = new Set([
+  "/cancel", "/reset", "/start",
+  "/admin", "/stats", "/funnel", "/weekly_report",
+  "/setmember", "/setstatus", "/poll", "/cron_status",
+  "/group_members", "/set_meeting", "/broadcast",
+  "/give_time", "/analyze_request", "/meeting_log",
+]);
+
 async function waitText(conversation: MyConversation, _ctx: MyContext): Promise<string> {
   // ВАЖНО: waitFor("message:text") — чтобы callback_query (нажатия inline-кнопок)
   // не перехватывались диалогом и проходили к своим обработчикам.
@@ -489,8 +498,10 @@ async function waitText(conversation: MyConversation, _ctx: MyContext): Promise<
   while (true) {
     const msgCtx = await conversation.waitFor("message:text");
     const text = msgCtx.message.text;
-    if (text === "/cancel" || text === "/reset" || text === "❌ Отмена") {
-      return "❌ Отмена";  // Caller сам ответит с нужной клавиатурой
+    const cmd = text.split(" ")[0].toLowerCase();
+    // Escape-команды прерывают диалог; бот обработает их через свои обычные handlers
+    if (ESCAPE_COMMANDS.has(cmd) || text === "❌ Отмена") {
+      return "❌ Отмена";
     }
     if (text.startsWith("/")) {
       await msgCtx.reply("⌨️ Введи ответ на вопрос или нажми «❌ Отмена».");
@@ -745,8 +756,13 @@ bot.command("start", async (ctx) => {
   const consentKey = ["pd_consent", u.id];
   const hasConsent = (await kv.get<boolean>(consentKey)).value;
   if (!hasConsent) {
-    const kb = new InlineKeyboard().text("✅ Согласен на обработку персональных данных", "pd_consent_yes");
-    await ctx.reply("Для использования бота необходимо согласие на обработку персональных данных (ФЗ-152).\n\nНажмите кнопку:", { reply_markup: kb });
+    const kb = new InlineKeyboard()
+      .text("📋 Читать политику конфиденциальности", "pd_show_policy").row()
+      .text("✅ Согласен на обработку персональных данных", "pd_consent_yes");
+    await ctx.reply(
+      "👋 Добро пожаловать в <b>БСП</b>!\n\nДля использования бота необходимо ознакомиться с политикой конфиденциальности и дать согласие на обработку персональных данных (ФЗ-152).\n\nНажмите «📋 Читать политику» чтобы ознакомиться, затем дайте согласие:",
+      { parse_mode: "HTML", reply_markup: kb }
+    );
     return;
   }
   const args = ctx.match;
@@ -1412,6 +1428,12 @@ bot.hears("🔬 Разбор запроса", async (ctx) => {
 
 // ─── CALLBACKS ────────────────────────────────────────────────────────────────
 
+bot.callbackQuery("pd_show_policy", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const kb = new InlineKeyboard().text("✅ Согласен на обработку персональных данных", "pd_consent_yes");
+  await ctx.reply(PRIVACY_TEXT + "\n\nЕсли вы согласны — нажмите кнопку ниже:", { parse_mode: "HTML", reply_markup: kb });
+});
+
 bot.callbackQuery("pd_consent_yes", async (ctx) => {
   await kv.set(["pd_consent", ctx.from!.id], true);
   await ctx.answerCallbackQuery("✅ Согласие принято");
@@ -2030,30 +2052,4 @@ Deno.serve(async (req: Request) => {
       return new Response("Неверный тариф", { status: 400 });
     }
     if (!ROBOKASSA_LOGIN || !ROBOKASSA_PASS1) {
-      return new Response("Оплата временно недоступна. Попробуйте позже.", { status: 503 });
-    }
-    const [amount, desc] = TARIFFS[plan];
-    const outSum = `${amount}.00`;
-    // Генерируем случайный InvId (200000–899999)
-    const arr = new Uint32Array(1);
-    crypto.getRandomValues(arr);
-    const invId = 200000 + (arr[0] % 700000);
-    // Подпись: MrchLogin:OutSum:InvId:Pass1:Shp_tariff=X:Shp_tgId=0
-    const shpStr = `Shp_tariff=${plan}:Shp_tgId=0`;
-    const sig = await md5Hex(`${ROBOKASSA_LOGIN}:${outSum}:${invId}:${ROBOKASSA_PASS1}:${shpStr}`);
-    const params = new URLSearchParams({
-      MrchLogin: ROBOKASSA_LOGIN, OutSum: outSum, InvId: String(invId),
-      Desc: desc, SignatureValue: sig,
-      Shp_tgId: "0", Shp_tariff: plan,
-    });
-    log("INFO", "web_pay_redirect", { plan, invId });
-    return new Response(null, {
-      status: 302,
-      headers: { "Location": `https://auth.robokassa.ru/Merchant/Index.aspx?${params}` },
-    });
-  }
-
-  return new Response("Not Found", { status: 404 });
-});
-
-log("INFO", "bot_started", { version: "4.6.0" });
+      return new Response("Оплата временно недоступна. Попробуйте 
