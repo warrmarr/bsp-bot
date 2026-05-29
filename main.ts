@@ -482,16 +482,21 @@ function kvStorage(kvDb: Deno.Kv) {
   };
 }
 
-async function waitText(conversation: MyConversation, ctx: MyContext): Promise<string> {
+async function waitText(conversation: MyConversation, _ctx: MyContext): Promise<string> {
+  // ВАЖНО: waitFor("message:text") — чтобы callback_query (нажатия inline-кнопок)
+  // не перехватывались диалогом и проходили к своим обработчикам.
+  // Раньше: conversation.wait() захватывал ALL updates → бот зависал при нажатии кнопок.
   while (true) {
-    ctx = await conversation.wait();
-    const text = ctx.message?.text;
-    if (text === "/cancel" || text === "/reset") {
-      await ctx.reply("Действие отменено.", { reply_markup: mainKb });
-      return "❌ Отмена";
+    const msgCtx = await conversation.waitFor("message:text");
+    const text = msgCtx.message.text;
+    if (text === "/cancel" || text === "/reset" || text === "❌ Отмена") {
+      return "❌ Отмена";  // Caller сам ответит с нужной клавиатурой
     }
-    if (text) return text;
-    await ctx.reply("⌨️ Введите текстовый ответ или нажмите «❌ Отмена».");
+    if (text.startsWith("/")) {
+      await msgCtx.reply("⌨️ Введи ответ на вопрос или нажми «❌ Отмена».");
+      continue;
+    }
+    return text;
   }
 }
 
