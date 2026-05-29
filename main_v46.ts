@@ -1537,7 +1537,9 @@ bot.callbackQuery(/^admin_accept_(\d+)$/, async (ctx) => {
   if (!hasRole(ctx.from.id, "admin")) return ctx.answerCallbackQuery("Нет доступа");
   await ctx.answerCallbackQuery("✅ Принято");
   const tgId = parseInt(ctx.match[1]);
-  await changeStatus(tgId, "candidate");
+  // Принимаем как "trial" (пробный период), из trial → member делает /setmember
+  await changeStatus(tgId, "trial");
+  statsCache = null;
   await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
   try { await bot.api.sendMessage(tgId, "✅ <b>Заявка одобрена!</b>\n\nКуратор свяжется в течение дня. @CTOCETOK", { parse_mode: "HTML" }); }
   catch (_e) { /* ignore */ }
@@ -2052,4 +2054,30 @@ Deno.serve(async (req: Request) => {
       return new Response("Неверный тариф", { status: 400 });
     }
     if (!ROBOKASSA_LOGIN || !ROBOKASSA_PASS1) {
-      return new Response("Оплата временно недоступна. Попробуйте 
+      return new Response("Оплата временно недоступна. Попробуйте позже.", { status: 503 });
+    }
+    const [amount, desc] = TARIFFS[plan];
+    const outSum = `${amount}.00`;
+    // Генерируем случайный InvId (200000–899999)
+    const arr = new Uint32Array(1);
+    crypto.getRandomValues(arr);
+    const invId = 200000 + (arr[0] % 700000);
+    // Подпись: MrchLogin:OutSum:InvId:Pass1:Shp_tariff=X:Shp_tgId=0
+    const shpStr = `Shp_tariff=${plan}:Shp_tgId=0`;
+    const sig = await md5Hex(`${ROBOKASSA_LOGIN}:${outSum}:${invId}:${ROBOKASSA_PASS1}:${shpStr}`);
+    const params = new URLSearchParams({
+      MrchLogin: ROBOKASSA_LOGIN, OutSum: outSum, InvId: String(invId),
+      Desc: desc, SignatureValue: sig,
+      Shp_tgId: "0", Shp_tariff: plan,
+    });
+    log("INFO", "web_pay_redirect", { plan, invId });
+    return new Response(null, {
+      status: 302,
+      headers: { "Location": `https://auth.robokassa.ru/Merchant/Index.aspx?${params}` },
+    });
+  }
+
+  return new Response("Not Found", { status: 404 });
+});
+
+log("INFO", "bot_started", { version: "4.6.0" });
