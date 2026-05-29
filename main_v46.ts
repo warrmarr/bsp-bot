@@ -13,7 +13,7 @@
  * В-2: Daily check-in — /checkin_on, /checkin_off + крон
  * В-3: Таймбанкинг — /give_time, /my_balance, /timebank_top
  * В-4: ЕНХ цифровой формат — conversational flow /enh
- * В-5: Напоминания о встречах — крон + /set_meeting
+ * В-5: Напоминания о встречах — крон + /set_meetinghh
  * В-1: Прогресс-бар — /my_progress
  * Л-1: Подготовка к встрече — /prep_meeting
  * Л-2: Разбор запроса 7 слоёв — /analyze_request
@@ -527,6 +527,7 @@ bot.use(async (ctx, next) => {
     log("INFO", "session_reset", { tgId, cmd: text.split(" ")[0] });
     // Стираем KV-запись сессии напрямую (в т.ч. поле conversations внутри неё)
     if (tgId) {
+      await kv.delete(["session", `${tgId}:${tgId}`]);  // правильный формат ключа grammY
       await kv.delete(["session", String(tgId)]);
     }
     // Ставим чистый объект — conversations() увидит пустой стейт
@@ -1959,7 +1960,7 @@ Deno.serve(async (req: Request) => {
       const s = (await kv.get<CronStatus>(["cron_status", name])).value;
       cronStatuses[name] = s?.status ?? "unknown";
     }
-    return new Response(JSON.stringify({ status: "ok", version: "4.7.0", ts: new Date().toISOString(), crons: cronStatuses }),
+    return new Response(JSON.stringify({ status: "ok", version: "4.7.1", ts: new Date().toISOString(), crons: cronStatuses }),
       { headers: { "Content-Type": "application/json", "Cache-Control": "no-cache, no-store" } });
   }
 
