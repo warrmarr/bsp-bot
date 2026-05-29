@@ -1639,7 +1639,6 @@ bot.command("setmember", async (ctx) => {
   if (parts.length < 2) { await ctx.reply("Использование: /setmember <tg_id> <bsp|bsp_plus|vip>"); return; }
   const tgId = parseInt(parts[0]); const tariff = parts[1];
   await upsertUser(tgId, "", { status: "member", tariff });
-  await changeStatus(tgId, "member");
   statsCache = null;
   await ctx.reply(`✅ ${tgId} → участник (${tariff})`);
   await kv.set(["welcome_queue", tgId], { step: 0, nextAt: Date.now() + 5000 });
