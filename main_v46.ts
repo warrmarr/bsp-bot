@@ -1,5 +1,5 @@
 /**
- * БСП — Telegram Bot v4.7.2 (Deno Deploy + grammy)
+ * БСП — Telegram Bot v4.7.3 (Deno Deploy + grammy)
  * НОВОЕ в v4.6.0:
  * - Эндпоинт GET /pay?plan=bsp|bsp_plus|vip — прямая оплата с сайта без Telegram
  * - /robokassa/result теперь обрабатывает оплаты с сайта (Shp_tgId=0)
@@ -198,6 +198,60 @@ async function listByStatus(status: string): Promise<User[]> {
     if (u) users.push(u);
   }
   return users;
+}
+
+// ── ПОДСЧЁТ ИЗ ИСТОЧНИКА ПРАВДЫ ──────────
+// ВАЖНО: считаем участников напрямую из ["users"], а НЕ из индекса by_status.
+// Индекс by_status — вторичный кэш; он может «осыпаться» после перезапусков.
+// Раньше из-за этого /stats показывал 0, хотя записи участников были целы.
+interface UserTally {
+  byStatus: Record<string, number>;
+  total: number;
+  newWeek: number;
+  inactive14: number;
+  revenue: number;
+}
+
+async function tallyAllUsers(): Promise<UserTally> {
+  const byStatus: Record<string, number> = {
+    lead: 0, candidate: 0, trial: 0, member: 0, vip: 0, rejected: 0,
+  };
+  let total = 0, newWeek = 0, inactive14 = 0, revenue = 0;
+  const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
+  const day14Ago = Date.now() - 14 * 24 * 3600 * 1000;
+  for await (const entry of kv.list({ prefix: ["users"] })) {
+    const usr = entry.value as User;
+    if (!usr || typeof usr.tgId !== "number") continue;
+    total++;
+    byStatus[usr.status] = (byStatus[usr.status] ?? 0) + 1;
+    if (usr.createdAt && new Date(usr.createdAt).getTime() > weekAgo) newWeek++;
+    if (["member", "vip", "trial"].includes(usr.status) &&
+        usr.lastActive && new Date(usr.lastActive).getTime() < day14Ago) inactive14++;
+    if (usr.status === "member") revenue += 5000;
+    else if (usr.status === "vip") revenue += 40000;
+    else if (usr.status === "trial" && usr.tariff === "bsp_plus") revenue += 11000;
+  }
+  return { byStatus, total, newWeek, inactive14, revenue };
+}
+
+// Самовосстановление индекса by_status: если индекс пуст, а участники есть — перестроить.
+// Делает рассылки/выборки по статусу устойчивыми к «осыпанию» индекса.
+let _indexChecked = false;
+async function ensureStatusIndex(force = false): Promise<void> {
+  if (_indexChecked && !force) return;
+  _indexChecked = true;
+  let hasIndex = false;
+  for await (const _ of kv.list({ prefix: ["by_status"] }, { limit: 1 })) { hasIndex = true; break; }
+  let hasUsers = false;
+  for await (const _ of kv.list({ prefix: ["users"] }, { limit: 1 })) { hasUsers = true; break; }
+  if (hasIndex || !hasUsers) return; // индекс цел либо чинить нечего
+  log("WARN", "rebuild_status_index", { reason: "index_empty_but_users_exist" });
+  let rebuilt = 0;
+  for await (const entry of kv.list({ prefix: ["users"] })) {
+    const u = entry.value as { tgId: number; status: string };
+    if (u && typeof u.tgId === "number") { await kv.set(["by_status", u.status, u.tgId], true); rebuilt++; }
+  }
+  log("INFO", "rebuild_status_index_done", { rebuilt });
 }
 
 async function countReferrals(tgId: number): Promise<number> {
@@ -525,10 +579,14 @@ bot.use(async (ctx, next) => {
   if (text === "/start" || text.startsWith("/start ") || text === "/reset") {
     const tgId = ctx.from?.id;
     log("INFO", "session_reset", { tgId, cmd: text.split(" ")[0] });
-    // Стираем KV-запись сессии напрямую (в т.ч. поле conversations внутри неё)
+    // БЕЗОПАСНОСТЬ: стирается ТОЛЬКО сессия самого нажавшего (ключи по его tgId).
+    // Записи участников (["users", …]) и индексы это НЕ трогает.
+    // grammY хранит сессии с ключом "chatId:userId" (в личке = "tgId:tgId").
     if (tgId) {
-      await kv.delete(["session", `${tgId}:${tgId}`]);  // правильный формат ключа grammY
-      await kv.delete(["session", String(tgId)]);
+      try {
+        await kv.delete(["session", `${tgId}:${tgId}`]);  // правильный формат ключа grammY
+        await kv.delete(["session", String(tgId)]);         // на всякий случай старый формат тоже
+      } catch (e) { log("WARN", "session_reset_fail", { tgId, error: String(e) }); }
     }
     // Ставим чистый объект — conversations() увидит пустой стейт
     ctx.session = { step: "" };
@@ -906,24 +964,16 @@ bot.command("stats", async (ctx) => {
   if (statsCache && Date.now() - statsCache.ts < 60000) {
     await ctx.reply(statsCache.text, { parse_mode: "HTML" }); return;
   }
-  const [lead, candidate, trial, member, vip, rejected] = await Promise.all([
-    countByStatus("lead"), countByStatus("candidate"), countByStatus("trial"),
-    countByStatus("member"), countByStatus("vip"), countByStatus("rejected"),
-  ]);
-  const total = lead + candidate + trial + member + vip + rejected;
-  let newWeek = 0, inactive14 = 0, revenue = 0;
-  const weekAgo = Date.now() - 7*24*3600*1000;
-  const day14Ago = Date.now() - 14*24*3600*1000;
-  for await (const entry of kv.list({ prefix: ["users"] })) {
-    const usr = entry.value as User;
-    if (new Date(usr.createdAt).getTime() > weekAgo) newWeek++;
-    if (["member","vip","trial"].includes(usr.status) && new Date(usr.lastActive).getTime() < day14Ago) inactive14++;
-    if (usr.status === "member") revenue += 5000;
-    else if (usr.status === "vip") revenue += 40000;
-    else if (usr.status === "trial" && usr.tariff === "bsp_plus") revenue += 11000;
-  }
+  // Подстраховка: чиним индекс by_status, если он осыпался (на цифры ниже не влияет)
+  await ensureStatusIndex().catch(() => {});
+  // Считаем напрямую из источника правды ["users"] — устойчиво к поломке индекса
+  const t = await tallyAllUsers();
+  const lead = t.byStatus.lead, candidate = t.byStatus.candidate, trial = t.byStatus.trial;
+  const member = t.byStatus.member, vip = t.byStatus.vip;
+  const total = t.total;
+  const newWeek = t.newWeek, inactive14 = t.inactive14, revenue = t.revenue;
   const text =
-    `📊 <b>Статистика БСП v4.4.0</b>\n\n` +
+    `📊 <b>Статистика БСП v4.7.3</b>\n\n` +
     `👥 Всего: <b>${total}</b>\n` +
     `🔵 Лиды: ${lead} · 🟡 Кандидаты: ${candidate}\n` +
     `🟠 Пробные: ${trial} · 🟢 Участники: ${member} · 👑 VIP: ${vip}\n\n` +
@@ -937,9 +987,11 @@ bot.command("stats", async (ctx) => {
 // NEW: Воронка конверсии
 bot.command("funnel", async (ctx) => {
   if (!hasRole(ctx.from!.id, "stats")) return;
+  await ensureStatusIndex().catch(() => {});
   const statuses = ["lead","candidate","trial","member","vip"];
+  const t = await tallyAllUsers();
   const counts: Record<string, number> = {};
-  for (const s of statuses) counts[s] = await countByStatus(s);
+  for (const s of statuses) counts[s] = t.byStatus[s] ?? 0;
   const total = Object.values(counts).reduce((a,b) => a+b, 0) || 1;
   let text = `📊 <b>Воронка конверсии БСП</b>\n\n`;
   const labels: Record<string, string> = { lead:"🔵 Лиды", candidate:"🟡 Кандидаты", trial:"🟠 Пробные", member:"🟢 Участники", vip:"👑 VIP" };
@@ -1625,16 +1677,18 @@ bot.callbackQuery(/^layer_(\d)$/, async (ctx) => {
 // ─── ADMIN КОМАНДЫ ────────────────────────────────────────────────────────────
 bot.command("admin", async (ctx) => {
   if (!hasRole(ctx.from!.id, "admin")) return;
+  await ensureStatusIndex().catch(() => {});
   const statuses = ["lead","candidate","trial","member","vip"];
+  const t = await tallyAllUsers();
   const counts: Record<string, number> = {};
-  for (const s of statuses) counts[s] = await countByStatus(s);
-  const total = Object.values(counts).reduce((a,b) => a+b, 0);
+  for (const s of statuses) counts[s] = t.byStatus[s] ?? 0;
+  const total = t.total;
   const kb = new InlineKeyboard()
     .text("📋 Лиды", "adm_list_lead").text("🟡 Кандидаты", "adm_list_candidate").row()
     .text("🟢 Участники", "adm_list_member").text("👑 VIP", "adm_list_vip").row()
     .text("📊 Экспорт CSV", "adm_export");
   await ctx.reply(
-    `🛠 <b>Админ-панель БСП v4.4.0</b>\n\nВсего: <b>${total}</b>\n🔵 Лиды: ${counts.lead} · 🟡 Кандидаты: ${counts.candidate}\n🟠 Пробные: ${counts.trial} · 🟢 Участники: ${counts.member} · 👑 VIP: ${counts.vip}\n\nКоманды: /stats · /funnel · /weekly_report · /poll\n/setmember · /setstatus · /cron_status\n/group_members <город> · /set_meeting`,
+    `🛠 <b>Админ-панель БСП v4.7.3</b>\n\nВсего: <b>${total}</b>\n🔵 Лиды: ${counts.lead} · 🟡 Кандидаты: ${counts.candidate}\n🟠 Пробные: ${counts.trial} · 🟢 Участники: ${counts.member} · 👑 VIP: ${counts.vip}\n\nКоманды: /stats · /funnel · /weekly_report · /poll\n/setmember · /setstatus · /cron_status\n/group_members <город> · /set_meeting`,
     { parse_mode: "HTML", reply_markup: kb }
   );
 });
@@ -1677,7 +1731,8 @@ bot.callbackQuery("cancel_status", async (ctx) => {
 });
 
 
-// ─── CATCH-ALL ─────────────────────────────────────────────────────────────────────────────
+// ─── CATCH-ALL ────────────────────────────────────────────────────────────────
+// Если бот не понял сообщение — выходим из любого диалога и возвращаем в меню
 bot.on("message", async (ctx) => {
   await ctx.conversation.exit();
   const u = await getUser(ctx.from!.id);
@@ -1961,6 +2016,11 @@ bot.catch(async (err) => {
 });
 
 // ─── WEBHOOK + HTTP ───────────────────────────────────────────────────────────
+// При каждом холодном старте изолята (в т.ч. после «зависания»/редеплоя) один раз
+// проверяем индекс by_status и при необходимости восстанавливаем его из ["users"].
+// Гарантирует, что /stats не покажет 0 при живых участниках.
+await ensureStatusIndex().catch((e) => log("WARN", "ensure_index_startup_fail", { error: String(e) }));
+
 const handleUpdate = webhookCallback(bot, "std/http");
 
 Deno.serve(async (req: Request) => {
@@ -1973,11 +2033,11 @@ Deno.serve(async (req: Request) => {
       const s = (await kv.get<CronStatus>(["cron_status", name])).value;
       cronStatuses[name] = s?.status ?? "unknown";
     }
-    return new Response(JSON.stringify({ status: "ok", version: "4.7.1", ts: new Date().toISOString(), crons: cronStatuses }),
+    return new Response(JSON.stringify({ status: "ok", version: "4.7.3", ts: new Date().toISOString(), crons: cronStatuses }),
       { headers: { "Content-Type": "application/json", "Cache-Control": "no-cache, no-store" } });
   }
 
-  if (url.pathname === "/") return new Response("БСП Bot v4.7.2 ✅", { status: 200 });
+  if (url.pathname === "/") return new Response("БСП Bot v4.7.3 ✅", { status: 200 });
 
   if (url.pathname === "/register-webhook") {
     const host = url.origin;
@@ -2082,6 +2142,7 @@ Deno.serve(async (req: Request) => {
         return new Response("Bad signature", { status: 403 });
       }
       if (!isWebPayment) {
+        await changeStatus(tgId, "member");
         await upsertUser(tgId, "", { tariff, status: "member" });
         await logEvent(tgId, "payment", `${tariff} ${outSum}₽ inv=${invId}`);
         statsCache = null;
