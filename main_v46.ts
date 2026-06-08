@@ -2195,23 +2195,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // ВРЕМЕННЫЙ диагностический эндпоинт: проверка, что KV сохраняет записи между запросами.
-  // /kvprobe?a=w&v=hello — записать; /kvprobe — прочитать. Удалить после проверки.
-  if (url.pathname === "/kvprobe") {
-    const k = ["__probe"];
-    if (url.searchParams.get("a") === "w") {
-      await kv.set(k, { v: url.searchParams.get("v"), ts: Date.now() });
-      return new Response(JSON.stringify({ wrote: true, v: url.searchParams.get("v") }),
-        { headers: { "Content-Type": "application/json" } });
-    }
-    const got = (await kv.get(k)).value;
-    let userCount = 0;
-    for await (const _ of kv.list({ prefix: ["users"] })) userCount++;
-    return new Response(JSON.stringify({ probe: got, userCount }),
-      { headers: { "Content-Type": "application/json" } });
-  }
-
   return new Response("Not Found", { status: 404 });
 });
 
-log("INFO", "bot_started", { version: "4.7.3" });
+log("INFO", "bot_started", { version: "4.6.0" });
