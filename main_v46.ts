@@ -1,5 +1,5 @@
 /**
- * БСП — Telegram Bot v4.7.3 (Deno Deploy + grammy)
+ * БСП — Telegram Bot v4.7.4 (Deno Deploy + grammy)
  * НОВОЕ в v4.6.0:
  * - Эндпоинт GET /pay?plan=bsp|bsp_plus|vip — прямая оплата с сайта без Telegram
  * - /robokassa/result теперь обрабатывает оплаты с сайта (Shp_tgId=0)
@@ -124,7 +124,7 @@ interface TimebankTx {
 const kv = await Deno.openKv();
 
 async function getUser(tgId: number): Promise<User|null> {
-  return (await kv.get<User>(["users", tgId])).value;
+  return (await kv.get<User>(["users", tgId], { consistency: "strong" })).value;
 }
 
 async function upsertUser(tgId: number, username: string, fields: Partial<User>): Promise<void> {
@@ -219,7 +219,7 @@ async function tallyAllUsers(): Promise<UserTally> {
   let total = 0, newWeek = 0, inactive14 = 0, revenue = 0;
   const weekAgo = Date.now() - 7 * 24 * 3600 * 1000;
   const day14Ago = Date.now() - 14 * 24 * 3600 * 1000;
-  for await (const entry of kv.list({ prefix: ["users"] })) {
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
     const usr = entry.value as User;
     if (!usr || typeof usr.tgId !== "number") continue;
     total++;
@@ -243,11 +243,11 @@ async function ensureStatusIndex(force = false): Promise<void> {
   let hasIndex = false;
   for await (const _ of kv.list({ prefix: ["by_status"] }, { limit: 1 })) { hasIndex = true; break; }
   let hasUsers = false;
-  for await (const _ of kv.list({ prefix: ["users"] }, { limit: 1 })) { hasUsers = true; break; }
+  for await (const _ of kv.list({ prefix: ["users"] }, { limit: 1, consistency: "strong" })) { hasUsers = true; break; }
   if (hasIndex || !hasUsers) return; // индекс цел либо чинить нечего
   log("WARN", "rebuild_status_index", { reason: "index_empty_but_users_exist" });
   let rebuilt = 0;
-  for await (const entry of kv.list({ prefix: ["users"] })) {
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
     const u = entry.value as { tgId: number; status: string };
     if (u && typeof u.tgId === "number") { await kv.set(["by_status", u.status, u.tgId], true); rebuilt++; }
   }
@@ -256,7 +256,7 @@ async function ensureStatusIndex(force = false): Promise<void> {
 
 async function countReferrals(tgId: number): Promise<number> {
   let n = 0;
-  for await (const entry of kv.list({ prefix: ["users"] })) {
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
     if ((entry.value as User).refBy === tgId) n++;
   }
   return n;
@@ -530,7 +530,7 @@ interface SessionData { step: string; }
 
 function kvStorage(kvDb: Deno.Kv) {
   return {
-    read: async (key: string) => (await kvDb.get<SessionData>(["session", key])).value ?? null,
+    read: async (key: string) => (await kvDb.get<SessionData>(["session", key], { consistency: "strong" })).value ?? null,
     write: async (key: string, value: SessionData) => { await kvDb.set(["session", key], value); },
     delete: async (key: string) => { await kvDb.delete(["session", key]); },
   };
@@ -723,7 +723,7 @@ async function pollConv(conversation: MyConversation, ctx: MyContext) {
   const kb = new InlineKeyboard();
   options.forEach((opt, i) => kb.text(opt, `poll_vote_${pollId}_${i}`).row());
   let sent = 0;
-  for await (const entry of kv.list({ prefix: ["users"] })) {
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
     const u = entry.value as User;
     if (!["member", "vip", "trial"].includes(u.status)) continue;
     try { await bot.api.sendMessage(u.tgId, `📊 <b>Опрос БСП</b>\n\n${pollQuestion}`, { parse_mode: "HTML", reply_markup: kb }); sent++; }
@@ -813,7 +813,7 @@ bot.command("reset", async (ctx) => {
 bot.command("start", async (ctx) => {
   const u = ctx.from!;
   const consentKey = ["pd_consent", u.id];
-  const hasConsent = (await kv.get<boolean>(consentKey)).value;
+  const hasConsent = (await kv.get<boolean>(consentKey, { consistency: "strong" })).value;
   if (!hasConsent) {
     const kb = new InlineKeyboard()
       .text("📋 Читать политику конфиденциальности", "pd_show_policy").row()
@@ -912,7 +912,7 @@ bot.command("find", async (ctx) => {
   const query = ctx.match?.toLowerCase().trim();
   if (!query) { await ctx.reply("Использование: /find маркетолог"); return; }
   const found: User[] = [];
-  for await (const entry of kv.list({ prefix: ["users"] })) {
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
     const usr = entry.value as User;
     if (!["member","vip","trial"].includes(usr.status)) continue;
     if (usr.notes?.toLowerCase().includes(query)) found.push(usr);
@@ -973,7 +973,7 @@ bot.command("stats", async (ctx) => {
   const total = t.total;
   const newWeek = t.newWeek, inactive14 = t.inactive14, revenue = t.revenue;
   const text =
-    `📊 <b>Статистика БСП v4.7.3</b>\n\n` +
+    `📊 <b>Статистика БСП v4.7.4</b>\n\n` +
     `👥 Всего: <b>${total}</b>\n` +
     `🔵 Лиды: ${lead} · 🟡 Кандидаты: ${candidate}\n` +
     `🟠 Пробные: ${trial} · 🟢 Участники: ${member} · 👑 VIP: ${vip}\n\n` +
@@ -1100,7 +1100,7 @@ bot.command("give_time", async (ctx) => {
   const reason = reasonParts.join(" ");
   // Ищем получателя
   let target: User|null = null;
-  for await (const entry of kv.list({ prefix: ["users"] })) {
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
     const usr = entry.value as User;
     if (usr.username === targetUsername) { target = usr; break; }
   }
@@ -1287,7 +1287,7 @@ bot.command("weekly_report", async (ctx) => {
   const weekAgo = Date.now() - 7*24*3600*1000;
   let csv = "tgId,username,name,city,job,status,tariff,visitCount,lastActive,createdAt,refs,timebank\n";
   let active = 0, newThisWeek = 0, inactive = 0;
-  for await (const entry of kv.list({ prefix: ["users"] })) {
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
     const u = entry.value as User;
     const refs = await countReferrals(u.tgId);
     const tb = await getTimebankBalance(u.tgId);
@@ -1621,7 +1621,7 @@ bot.callbackQuery("adm_export", async (ctx) => {
   if (!hasRole(ctx.from.id, "admin")) return ctx.answerCallbackQuery("Нет доступа");
   await ctx.answerCallbackQuery("Формирую...");
   let csv = "tgId,username,name,city,job,status,tariff,visitCount,lastActive,createdAt\n";
-  for await (const entry of kv.list({ prefix: ["users"] })) {
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
     const u = entry.value as User;
     csv += [u.tgId,u.username,u.name,u.city,u.job,u.status,u.tariff,u.visitCount,u.lastActive,u.createdAt]
       .map(v => `"${v ?? ""}"`).join(",") + "\n";
@@ -1688,7 +1688,7 @@ bot.command("admin", async (ctx) => {
     .text("🟢 Участники", "adm_list_member").text("👑 VIP", "adm_list_vip").row()
     .text("📊 Экспорт CSV", "adm_export");
   await ctx.reply(
-    `🛠 <b>Админ-панель БСП v4.7.3</b>\n\nВсего: <b>${total}</b>\n🔵 Лиды: ${counts.lead} · 🟡 Кандидаты: ${counts.candidate}\n🟠 Пробные: ${counts.trial} · 🟢 Участники: ${counts.member} · 👑 VIP: ${counts.vip}\n\nКоманды: /stats · /funnel · /weekly_report · /poll\n/setmember · /setstatus · /cron_status\n/group_members <город> · /set_meeting`,
+    `🛠 <b>Админ-панель БСП v4.7.4</b>\n\nВсего: <b>${total}</b>\n🔵 Лиды: ${counts.lead} · 🟡 Кандидаты: ${counts.candidate}\n🟠 Пробные: ${counts.trial} · 🟢 Участники: ${counts.member} · 👑 VIP: ${counts.vip}\n\nКоманды: /stats · /funnel · /weekly_report · /poll\n/setmember · /setstatus · /cron_status\n/group_members <город> · /set_meeting`,
     { parse_mode: "HTML", reply_markup: kb }
   );
 });
@@ -1781,7 +1781,7 @@ Deno.cron("inactive-alert", "0 9 * * *", async () => {
   try {
     const day14Ago = Date.now() - 14*24*3600*1000;
     const inactive: User[] = [];
-    for await (const entry of kv.list({ prefix: ["users"] })) {
+    for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
       const u = entry.value as User;
       if (!["member","vip","trial"].includes(u.status)) continue;
       if (new Date(u.lastActive).getTime() < day14Ago) inactive.push(u);
@@ -2033,11 +2033,11 @@ Deno.serve(async (req: Request) => {
       const s = (await kv.get<CronStatus>(["cron_status", name])).value;
       cronStatuses[name] = s?.status ?? "unknown";
     }
-    return new Response(JSON.stringify({ status: "ok", version: "4.7.3", ts: new Date().toISOString(), crons: cronStatuses }),
+    return new Response(JSON.stringify({ status: "ok", version: "4.7.4", ts: new Date().toISOString(), crons: cronStatuses }),
       { headers: { "Content-Type": "application/json", "Cache-Control": "no-cache, no-store" } });
   }
 
-  if (url.pathname === "/") return new Response("БСП Bot v4.7.3 ✅", { status: 200 });
+  if (url.pathname === "/") return new Response("БСП Bot v4.7.4 ✅", { status: 200 });
 
   if (url.pathname === "/register-webhook") {
     const host = url.origin;
@@ -2059,7 +2059,7 @@ Deno.serve(async (req: Request) => {
       await kv.delete(entry.key);
     }
     // Перестраиваем из users
-    for await (const entry of kv.list({ prefix: ["users"] })) {
+    for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
       const u = entry.value as { tgId: number; status: string };
       await kv.set(["by_status", u.status, u.tgId], true);
       fixed++;
@@ -2074,7 +2074,7 @@ Deno.serve(async (req: Request) => {
   // Диагностика KV: показывает все записи users + by_status индексы
   if (url.pathname === "/debug-kv") {
     const users: unknown[] = [];
-    for await (const entry of kv.list({ prefix: ["users"] })) {
+    for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
       const u = entry.value as { tgId: number; status: string; name: string };
       users.push({ tgId: u.tgId, name: u.name, status: u.status });
     }
