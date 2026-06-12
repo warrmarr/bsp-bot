@@ -262,6 +262,16 @@ async function countReferrals(tgId: number): Promise<number> {
   return n;
 }
 
+// Детально: сколько зарегистрировалось по ссылке и сколько из них оплатило
+async function countReferralsDetailed(tgId: number): Promise<{ registered: number; paid: number }> {
+  let registered = 0, paid = 0;
+  for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
+    const u = entry.value as User;
+    if (u.refBy === tgId) { registered++; if (["member", "vip"].includes(u.status)) paid++; }
+  }
+  return { registered, paid };
+}
+
 // Таймбанк
 async function getTimebankBalance(tgId: number): Promise<number> {
   return (await kv.get<number>(["timebank", tgId])).value ?? 0;
@@ -1071,11 +1081,11 @@ bot.command("enh", async (ctx) => { await ctx.conversation.enter("enhConv"); });
 
 bot.command("invite_friend", async (ctx) => {
   const u = ctx.from!;
-  const count = await countReferrals(u.id);
+  const ref = await countReferralsDetailed(u.id);
   const link = `https://t.me/${ctx.me.username}?start=ref${u.id}`;
   const promoActive = new Date() < new Date(PROMO_END_DATE);
   await ctx.reply(
-    `🎁 <b>Пригласи коллегу в БСП</b>\n\nТвоя ссылка:\n<code>${link}</code>\n\n💰 <b>+1 000 ₽</b> за каждого вступившего\n🎁 <b>3 реферала</b> = бесплатный месяц БСП+\n\nПриглашено: <b>${count} чел.</b>` +
+    `🎁 <b>Пригласи коллегу в БСП</b>\n\nТвоя ссылка:\n<code>${link}</code>\n\n💰 <b>+1 000 ₽</b> за каждого вступившего\n🎁 <b>3 реферала</b> = бесплатный месяц БСП+\n\n👥 Зарегистрировалось по ссылке: <b>${ref.registered}</b>\n✅ Из них оплатили: <b>${ref.paid}</b>\n💰 Бонус: <b>${ref.paid * 1000} ₽</b>` +
     (promoActive ? "\n\n🔥 <b>Акция:</b> реферал получает первый месяц в подарок!" : ""),
     { parse_mode: "HTML" }
   );
@@ -1392,10 +1402,10 @@ bot.hears("🤝 Есть/Нужно/Хочу", async (ctx) => {
 
 bot.hears("🎁 Мои рефералы", async (ctx) => {
   const u = ctx.from!;
-  const count = await countReferrals(u.id);
+  const ref = await countReferralsDetailed(u.id);
   const link = `https://t.me/${ctx.me.username}?start=ref${u.id}`;
   await ctx.reply(
-    `🎁 <b>Реферальная программа</b>\n\nТвоя ссылка:\n<code>${link}</code>\n\n💰 <b>+1 000 ₽</b> за каждого вступившего\n🎁 3 реферала = месяц БСП+\n\nПриглашено: <b>${count} чел.</b>`,
+    `🎁 <b>Реферальная программа</b>\n\nТвоя ссылка:\n<code>${link}</code>\n\n💰 <b>+1 000 ₽</b> за каждого вступившего\n🎁 3 реферала = месяц БСП+\n\n👥 Зарегистрировалось по ссылке: <b>${ref.registered}</b>\n✅ Из них оплатили: <b>${ref.paid}</b>\n💰 Бонус: <b>${ref.paid * 1000} ₽</b>`,
     { parse_mode: "HTML" }
   );
 });
@@ -2040,6 +2050,7 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req: Request) 
   if (url.pathname === "/") return new Response("БСП Bot v5.0.0 ✅", { status: 200 });
 
   if (url.pathname === "/register-webhook") {
+    if (url.searchParams.get("key") !== WEBHOOK_SECRET) return new Response("Not Found", { status: 404 });
     const host = url.origin;
     const webhookUrl = `${host}/${WEBHOOK_SECRET}`;
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
@@ -2053,6 +2064,7 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req: Request) 
 
   // Восстановление by_status индекса из реальных записей users
   if (url.pathname === "/repair-index") {
+    if (url.searchParams.get("key") !== WEBHOOK_SECRET) return new Response("Not Found", { status: 404 });
     let fixed = 0;
     // Сначала удаляем все by_status записи
     for await (const entry of kv.list({ prefix: ["by_status"] })) {
@@ -2073,6 +2085,7 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req: Request) 
 
   // Диагностика KV: показывает все записи users + by_status индексы
   if (url.pathname === "/debug-kv") {
+    if (url.searchParams.get("key") !== WEBHOOK_SECRET) return new Response("Not Found", { status: 404 });
     const users: unknown[] = [];
     for await (const entry of kv.list({ prefix: ["users"] }, { consistency: "strong" })) {
       const u = entry.value as { tgId: number; status: string; name: string };
@@ -2096,6 +2109,7 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req: Request) 
   }
 
   if (url.pathname === "/debug-token") {
+    if (url.searchParams.get("key") !== WEBHOOK_SECRET) return new Response("Not Found", { status: 404 });
     return new Response(JSON.stringify({
       token_set: BOT_TOKEN.length > 0,
       token_prefix: BOT_TOKEN.substring(0, 8) + "...",
@@ -2125,7 +2139,18 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req: Request) 
 
   if (url.pathname === "/robokassa/result") {
     try {
-      const p = url.searchParams;
+      let p = url.searchParams;
+      if (req.method === "POST") {
+        try {
+          const ct = req.headers.get("content-type") || "";
+          if (ct.includes("form")) {
+            const fd = await req.formData();
+            const merged = new URLSearchParams(url.searchParams);
+            for (const [k, v] of fd.entries()) merged.set(k, String(v));
+            p = merged;
+          }
+        } catch (_e) { /* ignore body parse */ }
+      }
       const outSum  = p.get("OutSum") ?? "";
       const invId   = p.get("InvId") ?? "";
       const tgIdParam = p.get("Shp_tgId") ?? "";
@@ -2197,6 +2222,7 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req: Request) 
 
   // ВРЕМЕННАЯ ДИАГНОСТИКА: показывает регион ответа и число участников в его базе.
   if (url.pathname === "/whereami") {
+    if (url.searchParams.get("key") !== WEBHOOK_SECRET) return new Response("Not Found", { status: 404 });
     const region = Deno.env.get("DENO_REGION") ?? "unknown";
     const dep = Deno.env.get("DENO_DEPLOYMENT_ID") ?? "";
     const t = Date.now();
